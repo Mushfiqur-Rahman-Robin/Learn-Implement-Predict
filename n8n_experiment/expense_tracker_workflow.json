@@ -1,0 +1,275 @@
+{
+  "name": "expense tracker workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -624,
+        -256
+      ],
+      "id": "dummy_node_id_telegram_trigger",
+      "name": "Telegram ExpenseBot Trigger",
+      "webhookId": "dummy_webhook_id",
+      "credentials": {
+        "telegramApi": {
+          "id": "dummy_telegram_credential_id",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "dummy_assignment_id",
+              "name": "prompt",
+              "value": "=You are an expert data extraction tool. Your task is to extract expense details from a user's message and provide the output ONLY in a valid JSON format.  The JSON object must have the following keys: \"date\", \"time\", \"amount\", \"item\".  - \"date\": The current date in YYYY-MM-DD format. Today's date is {{$node[\"Code (Adjust Time to Dhaka Timezone)\"].json.adjustedDate}}. - \"time\": The current time in HH:MM:SS format. The current time is {{$node[\"Code (Adjust Time to Dhaka Timezone)\"].json.adjustedTime}}. - \"amount\": The numeric value of the expense, *excluding the currency symbol or code.* - \"item\": A brief, descriptive summary of the expense.  User message: \"{{$json.message.text}}\"  Extract the information and provide ONLY the JSON object.",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -224,
+        -256
+      ],
+      "id": "dummy_node_id_edit_fields",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "// The LLM's response from Ollama is typically found in the 'response' field of this node's input.\nconst rawOllamaResponse = $json.response;\n\nif (typeof rawOllamaResponse !== 'string' || rawOllamaResponse.trim() === '') {\n  throw new Error('Ollama response field is missing or not a string.');\n}\n\nlet parsedLLMData;\ntry {\n  // Attempt to parse the string directly\n  parsedLLMData = JSON.parse(rawOllamaResponse);\n} catch (e) {\n  // If direct parsing fails, it might be wrapped in markdown (e.g., ```json...```)\n  const strippedResponse = rawOllamaResponse.replace(/```json|```/g, '').trim();\n  try {\n    parsedLLMData = JSON.parse(strippedResponse);\n  } catch (e2) {\n    throw new Error('Failed to parse LLM response after stripping markdown: ' + e2.message + '\\nOriginal response: ' + rawOllamaResponse);\n  }\n}\n\n// --- CRITICAL FIX HERE ---\n// Retrieve adjustedDate and adjustedTime directly from the output of the\n// \"Code (Adjust Time to Dhaka Timezone)\" node.\n// Use the exact name of your node.\nconst adjustedTimezoneNodeOutput = $node[\"Code (Adjust Time to Dhaka Timezone)\"].json;\nconst finalDate = adjustedTimezoneNodeOutput.adjustedDate;\nconst finalTime = adjustedTimezoneNodeOutput.adjustedTime;\n// --- END CRITICAL FIX ---\n\n// Combine our authoritative adjusted date/time with the LLM's extracted amount/item\n// and provide it in a clean format for the Google Sheets node.\nreturn {\n  json: {\n    date: finalDate,                 // Use our adjusted date\n    time: finalTime,                 // Use our adjusted time\n    amount: parsedLLMData.amount,    // Get amount from LLM's parsed output\n    item: parsedLLMData.item         // Get item from LLM's parsed output\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        -256
+      ],
+      "id": "dummy_node_id_code_ollama_parse",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://your_ollama_host:11434/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gemma3:270m"
+            },
+            {
+              "name": "prompt",
+              "value": "=- {{$json.prompt}}"
+            },
+            {
+              "name": "stream",
+              "value": "={{ Boolean(false) }}"
+            },
+            {
+              "name": "format",
+              "value": "json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -16,
+        -256
+      ],
+      "id": "dummy_node_id_http_request",
+      "name": "HTTP Request to Ollama for Extraction",
+      "executeOnce": false,
+      "retryOnFail": true,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "dummy_google_sheet_id",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Your_Expenses_Sheet_Name",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{$json.date}}",
+            "Time": "={{$json.time}}",
+            "Amount": "={{$json.amount}}",
+            "Item": "={{$json.item}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Time",
+              "displayName": "Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Amount",
+              "displayName": "Amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Item",
+              "displayName": "Item",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        384,
+        -256
+      ],
+      "id": "dummy_node_id_append_sheet",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleApi": {
+          "id": "dummy_google_credential_id",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the current server time\nconst now = new Date();\n\n// Add 6 hours to UTC time to adjust to your timezone (e.g., Dhaka is UTC+6)\n// Using setUTCHours to explicitly work with UTC, then converting\nnow.setUTCHours(now.getUTCHours() + 6);\n\n// Format the adjusted date as YYYY-MM-DD\nconst adjustedDate = now.toISOString().split('T')[0];\n\n// --- CRITICAL CHANGE HERE: Manual AM/PM Time Formatting ---\nlet hours = now.getHours();\nconst minutes = String(now.getMinutes()).padStart(2, '0');\nconst seconds = String(now.getSeconds()).padStart(2, '0');\nconst ampm = hours >= 12 ? 'PM' : 'AM';\n\n// Convert to 12-hour format\nhours = hours % 12;\nhours = hours ? hours : 12; // The hour '0' should be '12'\n\nconst adjustedTime = `${String(hours).padStart(2, '0')}:${minutes}:${seconds} ${ampm}`;\n// --- END CRITICAL CHANGE ---\n\n// Ensure original input data (from Telegram) is passed through,\n// and the new adjusted time fields are added to it.\nfor (const item of items) {\n  item.json.adjustedDate = adjustedDate;\n  item.json.adjustedTime = adjustedTime;\n}\n\n// Return all items, now with adjustedDate and adjustedTime added.\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        -256
+      ],
+      "id": "dummy_node_id_code_timezone",
+      "name": "Code (Adjust Time to Dhaka Timezone)"
+    }
+  ],
+  "connections": {
+    "Telegram ExpenseBot Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code (Adjust Time to Dhaka Timezone)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request to Ollama for Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request to Ollama for Extraction": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code (Adjust Time to Dhaka Timezone)": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "dummy_error_workflow_id",
+    "timeSavedPerExecution": 1
+  },
+  "versionId": "dummy_version_id",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "dummy_instance_id"
+  },
+  "id": "dummy_workflow_id",
+  "tags": []
+}
